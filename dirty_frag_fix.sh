@@ -31,20 +31,59 @@ function show_help(){
     echo
     echo "Options:"
     echo "  -h, --help       Show this help menu"
+    echo "  -c, --check      Check mitigation status (no root required)"
     echo "  -r, --rollback   Remove /etc/modprobe.d/dirtyfrag.conf"
     echo
     echo "Examples:"
     echo "  sudo ./$script_name"
+    echo "  ./$script_name --check"
     echo "  sudo ./$script_name --rollback"
     echo "  ./$script_name --help"
 }
 
 action="apply"
 
+function check_status(){
+    local conf_file="/etc/modprobe.d/dirtyfrag.conf"
+    local has_esp4="no"
+    local has_esp6="no"
+    local has_rxrpc="no"
+    local loaded_any="no"
+
+    if grep -qE '^esp4 ' /proc/modules 2>/dev/null; then loaded_any="yes"; fi
+    if grep -qE '^esp6 ' /proc/modules 2>/dev/null; then loaded_any="yes"; fi
+    if grep -qE '^rxrpc ' /proc/modules 2>/dev/null; then loaded_any="yes"; fi
+
+    if [[ -f "$conf_file" ]]; then
+        if grep -qE '^[[:space:]]*install[[:space:]]+esp4[[:space:]]+/bin/false([[:space:]]|$)' "$conf_file"; then has_esp4="yes"; fi
+        if grep -qE '^[[:space:]]*install[[:space:]]+esp6[[:space:]]+/bin/false([[:space:]]|$)' "$conf_file"; then has_esp6="yes"; fi
+        if grep -qE '^[[:space:]]*install[[:space:]]+rxrpc[[:space:]]+/bin/false([[:space:]]|$)' "$conf_file"; then has_rxrpc="yes"; fi
+    fi
+
+    echo -e "${blueColour}[*] Checking dirtyfrag mitigation status (non-root check mode)...${endColour}"
+    echo -e "${blueColour}[*] Config file:${endColour} $conf_file"
+    echo -e "${blueColour}[*] install esp4 /bin/false:${endColour} $has_esp4"
+    echo -e "${blueColour}[*] install esp6 /bin/false:${endColour} $has_esp6"
+    echo -e "${blueColour}[*] install rxrpc /bin/false:${endColour} $has_rxrpc"
+    echo -e "${blueColour}[*] Any vulnerable modules currently loaded:${endColour} $loaded_any"
+
+    if [[ "$has_esp4" == "yes" && "$has_esp6" == "yes" && "$has_rxrpc" == "yes" && "$loaded_any" == "no" ]]; then
+        echo -e "${greenColour}[+] Likely mitigated against dirtyfrag based on module blocklist and load state.${endColour}"
+        echo -e "${yellowColour}[*] Note:${endColour} This same module-level mitigation also reduces fragnesia exposure on the same ESP/XFRM surface."
+        echo -e "${yellowColour}[*] Note:${endColour} Fragnesia is a separate bug with its own patch, but shares mitigation surface with dirtyfrag."
+    else
+        echo -e "${redColour}[-] Not fully mitigated based on current non-root checks.${endColour}"
+        echo -e "${yellowColour}[*] Recommendation:${endColour} ensure dirtyfrag.conf has install rules for esp4/esp6/rxrpc and unload active modules as root."
+    fi
+}
+
 case "$1" in
     -h|--help)
         show_help
         exit 0
+        ;;
+    -c|--check)
+        action="check"
         ;;
     -r|--rollback)
         action="rollback"
@@ -58,6 +97,11 @@ case "$1" in
         exit 1
         ;;
 esac
+
+if [ "$action" = "check" ]; then
+    check_status
+    exit 0
+fi
 
 
 if [ "$(id -u)" -ne 0 ]; then
